@@ -12,7 +12,7 @@ on:
           - 'LineageOS (Custom ROM Base - 4.14.x)'
           - 'ArrowOS (Performance Base - 4.14.x)'
       custom_defconfig:
-        description: 'Manual Defconfig (Opsional, kosongkan untuk Auto-Detect)'
+        description: 'Manual Defconfig (Kosongkan untuk Auto-Detect)'
         required: false
         default: 'vendor/sdmsteppe-perf_defconfig'
 
@@ -44,16 +44,12 @@ jobs:
             echo "ZIP_NAME=Surya-ArrowOS-4.14.x-KSU-Next" >> $GITHUB_ENV
           fi
 
-      - name: Set up Build Environment
+      - name: Set up Build Environment (System Clang + GCC)
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           bc bison flex libssl-dev make libc6-dev libncurses5-dev libncurses-dev curl \
-          git zip unzip lld llvm python3 ccache wget zstd
-
-      - name: Setup Toolchain (Proton Clang)
-        run: |
-          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/clang
+          git zip unzip lld llvm python3 ccache wget zstd clang
 
       - name: Clone Kernel Source
         run: |
@@ -73,8 +69,6 @@ jobs:
         working-directory: kernel-source
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          export HOSTCFLAGS="-fcommon"
 
           if [ -n "${{ github.event.inputs.custom_defconfig }}" ]; then
             TARGET_DEFCONFIG="${{ github.event.inputs.custom_defconfig }}"
@@ -89,12 +83,15 @@ jobs:
 
           echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
 
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 ${TARGET_DEFCONFIG}
+          # Sisipkan HOSTCFLAGS="-fcommon" agar error yylloc tidak muncul
+          make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" ${TARGET_DEFCONFIG}
 
+          # Nonaktifkan Stackprotector karena Hybrid toolchain sering memicu error peringatan ini
           if grep -q "CONFIG_CC_STACKPROTECTOR_STRONG=y" out/.config 2>/dev/null; then
             ./scripts/config --file out/.config -d CONFIG_CC_STACKPROTECTOR_STRONG
           fi
 
+          # Konfigurasi fitur custom
           ./scripts/config --file out/.config \
             -e CONFIG_MODULES \
             -e CONFIG_MODULE_FORCE_LOAD \
@@ -105,19 +102,17 @@ jobs:
             -d CONFIG_MODULE_SIG_ALL \
             -e CONFIG_RANDOMIZE_BASE
 
-          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 olddefconfig
+          make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" olddefconfig
 
       - name: Compile Kernel
         working-directory: kernel-source
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          export HOSTCFLAGS="-fcommon"
           
-          make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar \
-            NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+          # Target build Image.gz-dtb
+          make -j$(nproc) O=out ARCH=arm64 CC=clang \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 Image.gz-dtb || exit 1
+            HOSTCFLAGS="-fcommon" Image.gz-dtb || exit 1
 
       - name: Clone AnyKernel3 & Create ZIP
         run: |
