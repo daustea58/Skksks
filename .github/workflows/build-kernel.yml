@@ -74,6 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export HOSTCFLAGS="-fcommon"
 
           if [ -n "${{ github.event.inputs.custom_defconfig }}" ]; then
             TARGET_DEFCONFIG="${{ github.event.inputs.custom_defconfig }}"
@@ -88,15 +89,12 @@ jobs:
 
           echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
 
-          # 1) Buat defconfig dengan parameter kompilator penuh agar lolos pre-check
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 ${TARGET_DEFCONFIG}
 
-          # 2) Matikan stackprotector jika masih tersisa
           if grep -q "CONFIG_CC_STACKPROTECTOR_STRONG=y" out/.config 2>/dev/null; then
             ./scripts/config --file out/.config -d CONFIG_CC_STACKPROTECTOR_STRONG
           fi
 
-          # 3) Konfigurasi Modul & Keamanan
           ./scripts/config --file out/.config \
             -e CONFIG_MODULES \
             -e CONFIG_MODULE_FORCE_LOAD \
@@ -107,7 +105,6 @@ jobs:
             -d CONFIG_MODULE_SIG_ALL \
             -e CONFIG_RANDOMIZE_BASE
 
-          # 4) Regenerasi config dengan parameter kompilator penuh
           make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 olddefconfig
 
       - name: Compile Kernel
@@ -115,8 +112,8 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export HOSTCFLAGS="-fcommon"
           
-          # Target Image.gz-dtb wajib disertakan di akhir perintah
           make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar \
             NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
@@ -125,7 +122,6 @@ jobs:
       - name: Clone AnyKernel3 & Create ZIP
         run: |
           git clone --depth=1 ${{ env.ANYKERNEL_REPO }} AnyKernel3
-          # Menggunakan fallback copy jika dtb menyatu atau terpisah
           cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/out/arch/arm64/boot/Image.gz AnyKernel3/ || true
           cd AnyKernel3
           
