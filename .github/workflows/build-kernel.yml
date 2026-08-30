@@ -14,7 +14,7 @@ on:
       custom_defconfig:
         description: 'Manual Defconfig (Opsional, kosongkan untuk Auto-Detect)'
         required: false
-        default: ''
+        default: 'vendor/sdmsteppe-perf_defconfig'
 
 env:
   ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
@@ -69,40 +69,30 @@ jobs:
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
+      - name: Buat Variabel Make Flags
+        run: |
+          echo "MAKE_ARGS=O=out ARCH=arm64 CC=clang AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+
       - name: Konfigurasi Kernel & Modul
         working-directory: kernel-source
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           
-          # Gunakan defconfig manual jika diisi
           if [ -n "${{ github.event.inputs.custom_defconfig }}" ]; then
             TARGET_DEFCONFIG="${{ github.event.inputs.custom_defconfig }}"
-            echo "✅ Menggunakan defconfig manual: $TARGET_DEFCONFIG"
           else
-            echo "🔍 Auto-Detect defconfig..."
-            # Cari file atau symlink (hapus flag -type f agar symlink terbaca)
             DEFCONFIG_FULL_PATH=$(find arch/arm64/configs -name "*surya*defconfig" | head -n 1)
-            
             if [ -z "$DEFCONFIG_FULL_PATH" ]; then
-              echo "⚠️ Defconfig dengan nama 'surya' tidak ditemukan. Mencoba fallback chipset..."
-              
-              if [ -f "arch/arm64/configs/vendor/sm6150-perf_defconfig" ]; then
-                TARGET_DEFCONFIG="vendor/sm6150-perf_defconfig"
-              elif [ -f "arch/arm64/configs/vendor/bengal-perf_defconfig" ]; then
-                TARGET_DEFCONFIG="vendor/bengal-perf_defconfig"
-              else
-                echo "📋 Menampilkan semua daftar defconfig yang tersedia:"
-                find arch/arm64/configs -name "*defconfig"
-                echo "❌ ERROR: Defconfig tidak ditemukan otomatis. Silakan cek daftar di atas dan isi manual di kolom 'Manual Defconfig'!"
-                exit 1
-              fi
+              TARGET_DEFCONFIG="vendor/sdmsteppe-perf_defconfig"
             else
               TARGET_DEFCONFIG=${DEFCONFIG_FULL_PATH#arch/arm64/configs/}
             fi
-            echo "✅ Berhasil menetapkan: $TARGET_DEFCONFIG"
           fi
           
-          make O=out ARCH=arm64 $TARGET_DEFCONFIG
+          echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
+          
+          # Terapkan MAKE_ARGS agar tahap konfigurasi menggunakan Clang
+          make ${{ env.MAKE_ARGS }} $TARGET_DEFCONFIG
           
           # Optimasi modul & keamanan
           ./scripts/config --file out/.config \
@@ -115,7 +105,7 @@ jobs:
             -d CONFIG_MODULE_SIG_ALL \
             -e CONFIG_RANDOMIZE_BASE
             
-          make O=out ARCH=arm64 olddefconfig
+          make ${{ env.MAKE_ARGS }} olddefconfig
 
       - name: Compile Kernel
         working-directory: kernel-source
@@ -123,16 +113,7 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
           
-          make -j$(nproc) O=out ARCH=arm64 \
-            CC="ccache clang" \
-            AR=llvm-ar \
-            NM=llvm-nm \
-            OBJCOPY=llvm-objcopy \
-            OBJDUMP=llvm-objdump \
-            STRIP=llvm-strip \
-            CROSS_COMPILE=aarch64-linux-gnu- \
-            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            Image.gz-dtb || exit 1
+          make -j$(nproc) ${{ env.MAKE_ARGS }} Image.gz-dtb || exit 1
 
       - name: Clone AnyKernel3 & Create ZIP
         run: |
