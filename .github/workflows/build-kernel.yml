@@ -15,7 +15,6 @@ on:
 env:
   DEFCONFIG: surya_defconfig
   ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
-  CLANG_URL: https://github.com/ZyC-X/zyc-clang/releases/download/v17.0.0-Older/zyc-clang-17-0-0.tar.gz
 
 jobs:
   build:
@@ -49,12 +48,10 @@ jobs:
           bc bison flex libssl-dev make libc6-dev libncurses5-dev libncurses-dev curl \
           git zip unzip lld llvm python3 ccache wget zstd
 
-      - name: Setup Toolchain (Clang 17)
+      - name: Setup Toolchain (Proton Clang)
         run: |
-          mkdir -p $GITHUB_WORKSPACE/clang
-          wget -qO clang.tar.gz ${{ env.CLANG_URL }}
-          tar -xf clang.tar.gz -C $GITHUB_WORKSPACE/clang
-          rm clang.tar.gz
+          # Menggunakan Git Clone agar tidak terkena error 404 (exit code 8)
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/clang
 
       - name: Clone Kernel Source
         run: |
@@ -126,4 +123,3 @@ jobs:
           name: ${{ env.ZIP_NAME }}
           path: ${{ env.ZIP_NAME }}.zip
           retention-days: 7
-          
