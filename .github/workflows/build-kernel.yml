@@ -69,9 +69,9 @@ jobs:
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Buat Variabel Make Flags
+      - name: Buat Variabel Make Flags (TERMASUK LLVM FIX)
         run: |
-          echo "MAKE_ARGS=O=out ARCH=arm64 CC=clang AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-" >> $GITHUB_ENV
+          echo "MAKE_ARGS=O=out ARCH=arm64 CC=clang AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
 
       - name: Konfigurasi Kernel & Modul
         working-directory: kernel-source
@@ -91,7 +91,6 @@ jobs:
           
           echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
           
-          # Terapkan MAKE_ARGS agar tahap konfigurasi menggunakan Clang
           make ${{ env.MAKE_ARGS }} $TARGET_DEFCONFIG
           
           # Optimasi modul & keamanan
@@ -133,3 +132,4 @@ jobs:
           name: ${{ env.ZIP_NAME }}
           path: ${{ env.ZIP_NAME }}.zip
           retention-days: 7
+          
