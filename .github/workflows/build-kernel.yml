@@ -69,10 +69,6 @@ jobs:
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Buat Variabel Make Flags (TERMASUK LLVM FIX)
-        run: |
-          echo "MAKE_ARGS=O=out ARCH=arm64 CC=clang AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1" >> $GITHUB_ENV
-
       - name: Konfigurasi Kernel & Modul
         working-directory: kernel-source
         run: |
@@ -91,9 +87,9 @@ jobs:
           
           echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
           
-          make ${{ env.MAKE_ARGS }} $TARGET_DEFCONFIG
+          # HARDCODE FLAGS PENUH
+          make O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 $TARGET_DEFCONFIG
           
-          # Optimasi modul & keamanan
           ./scripts/config --file out/.config \
             -e CONFIG_MODULES \
             -e CONFIG_MODULE_FORCE_LOAD \
@@ -104,7 +100,8 @@ jobs:
             -d CONFIG_MODULE_SIG_ALL \
             -e CONFIG_RANDOMIZE_BASE
             
-          make ${{ env.MAKE_ARGS }} olddefconfig
+          # HARDCODE FLAGS PENUH (Olddefconfig)
+          make O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 olddefconfig
 
       - name: Compile Kernel
         working-directory: kernel-source
@@ -112,7 +109,8 @@ jobs:
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
           
-          make -j$(nproc) ${{ env.MAKE_ARGS }} Image.gz-dtb || exit 1
+          # HARDCODE FLAGS PENUH (Kompilasi Akhir)
+          make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 Image.gz-dtb || exit 1
 
       - name: Clone AnyKernel3 & Create ZIP
         run: |
@@ -132,4 +130,3 @@ jobs:
           name: ${{ env.ZIP_NAME }}
           path: ${{ env.ZIP_NAME }}.zip
           retention-days: 7
-          
