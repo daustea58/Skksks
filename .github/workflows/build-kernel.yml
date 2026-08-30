@@ -1,94 +1,94 @@
-name: Build Custom Kernel Surya (Multi-Source)
+name: Build Custom Kernel Surya (Final Fix)
 
 on:
   workflow_dispatch:
     inputs:
       base_kernel:
-        description: 'Pilih Base Kernel Source'
+        description: 'Pilih Base Kernel'
         required: true
         type: choice
         options:
-          - 'MiCode (MIUI Stock Android 10 - 4.14.117)'
-          - 'LineageOS (Custom ROM Base - 4.14.x)'
-          - 'ArrowOS (Performance Base - 4.14.x)'
-      custom_defconfig:
-        description: 'Manual Defconfig (Kosongkan untuk Auto-Detect)'
-        required: false
-        default: 'vendor/sdmsteppe-perf_defconfig'
+          - 'MiCode (MIUI Stock Android 10)'
+          - 'LineageOS (Custom ROM Base)'
+          - 'ArrowOS (Performance Base)'
 
 env:
   ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
 
 jobs:
   build:
-    name: Build Kernel Surya
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-20.04
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set Variable Berdasarkan Pilihan
+      - name: Set Variable
         run: |
-          if [ "${{ github.event.inputs.base_kernel }}" == "MiCode (MIUI Stock Android 10 - 4.14.117)" ]; then
+          if [ "${{ github.event.inputs.base_kernel }}" == "MiCode (MIUI Stock Android 10)" ]; then
             echo "KERNEL_REPO=https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git" >> $GITHUB_ENV
             echo "KERNEL_BRANCH=surya-q-oss" >> $GITHUB_ENV
-            echo "ZIP_NAME=Surya-MiCode-4.14.117-KSU-Next" >> $GITHUB_ENV
-          elif [ "${{ github.event.inputs.base_kernel }}" == "LineageOS (Custom ROM Base - 4.14.x)" ]; then
+            echo "ZIP_NAME=Surya-MiCode-KSU-Next" >> $GITHUB_ENV
+          elif [ "${{ github.event.inputs.base_kernel }}" == "LineageOS (Custom ROM Base)" ]; then
             echo "KERNEL_REPO=https://github.com/LineageOS/android_kernel_xiaomi_surya.git" >> $GITHUB_ENV
             echo "KERNEL_BRANCH=lineage-18.1" >> $GITHUB_ENV
-            echo "ZIP_NAME=Surya-LineageOS-4.14.x-KSU-Next" >> $GITHUB_ENV
+            echo "ZIP_NAME=Surya-LineageOS-KSU-Next" >> $GITHUB_ENV
           else
             echo "KERNEL_REPO=https://github.com/ArrowOS-Devices/android_kernel_xiaomi_surya.git" >> $GITHUB_ENV
             echo "KERNEL_BRANCH=arrow-11.0" >> $GITHUB_ENV
-            echo "ZIP_NAME=Surya-ArrowOS-4.14.x-KSU-Next" >> $GITHUB_ENV
+            echo "ZIP_NAME=Surya-ArrowOS-KSU-Next" >> $GITHUB_ENV
           fi
 
-      - name: Set up Build Environment (Pure GCC)
+      - name: Install Dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
-          bc bison flex libssl-dev make libc6-dev libncurses5-dev libncurses-dev curl \
-          git zip unzip python3 ccache wget zstd
+          sudo apt-get install -y bc bison build-essential ccache curl flex \
+          gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi git libncurses-dev \
+          libssl-dev lld llvm make python2 python-is-python2 python3 zip zstd
+
+      - name: Setup Proton Clang
+        run: |
+          git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/clang
+          echo "$GITHUB_WORKSPACE/clang/bin" >> $GITHUB_PATH
 
       - name: Clone Kernel Source
         run: |
           git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} kernel-source
 
-      - name: Integrasi KernelSU Next & SUSFS
+      - name: Setup KernelSU Next & SUSFS
         working-directory: kernel-source
         run: |
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
-          
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs
           cp -r ../susfs/kernel_patches/fs/* fs/
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Konfigurasi Kernel & Modul
+      - name: Patch Python 2 gcc-wrapper
         working-directory: kernel-source
         run: |
-          set -euo pipefail
+          if [ -f scripts/gcc-wrapper.py ]; then
+            # Paksa script menggunakan Python 2 secara eksplisit
+            sed -i 's|#!/usr/bin/env python|#!/usr/bin/env python2|g' scripts/gcc-wrapper.py
+            # Ubah sintaks print sebagai cadangan
+            sed -i 's/print >> sys.stderr, line,/sys.stderr.write(line)/g' scripts/gcc-wrapper.py
+          fi
 
-          if [ -n "${{ github.event.inputs.custom_defconfig }}" ]; then
-            TARGET_DEFCONFIG="${{ github.event.inputs.custom_defconfig }}"
+      - name: Build Kernel
+        working-directory: kernel-source
+        run: |
+          DEFCONFIG_FULL_PATH=$(find arch/arm64/configs -name "*surya*defconfig" | head -n 1 || true)
+          if [ -z "$DEFCONFIG_FULL_PATH" ]; then
+            TARGET_DEFCONFIG="vendor/sdmsteppe-perf_defconfig"
           else
-            DEFCONFIG_FULL_PATH=$(find arch/arm64/configs -name "*surya*defconfig" | head -n 1 || true)
-            if [ -z "$DEFCONFIG_FULL_PATH" ]; then
-              TARGET_DEFCONFIG="vendor/sdmsteppe-perf_defconfig"
-            else
-              TARGET_DEFCONFIG=${DEFCONFIG_FULL_PATH#arch/arm64/configs/}
-            fi
+            TARGET_DEFCONFIG=${DEFCONFIG_FULL_PATH#arch/arm64/configs/}
           fi
+          echo "Menggunakan defconfig: $TARGET_DEFCONFIG"
 
-          echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
-
-          # Menggunakan Pure GCC (-fcommon untuk error yylloc, -Wno-error untuk bypass warning)
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error" ${TARGET_DEFCONFIG}
-
-          if grep -q "CONFIG_CC_STACKPROTECTOR_STRONG=y" out/.config 2>/dev/null; then
-            ./scripts/config --file out/.config -d CONFIG_CC_STACKPROTECTOR_STRONG
-          fi
+          # Memaksa flag langsung masuk ke command line make
+          MAKE_ARGS="O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1"
+          
+          make $MAKE_ARGS $TARGET_DEFCONFIG
 
           ./scripts/config --file out/.config \
             -e CONFIG_MODULES \
@@ -98,29 +98,20 @@ jobs:
             -d CONFIG_MODULE_SIG \
             -d CONFIG_MODULE_SIG_FORCE \
             -d CONFIG_MODULE_SIG_ALL \
-            -e CONFIG_RANDOMIZE_BASE
+            -e CONFIG_RANDOMIZE_BASE \
+            -d CONFIG_CC_STACKPROTECTOR_STRONG
 
-          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error" olddefconfig
+          make $MAKE_ARGS olddefconfig
+          make -j$(nproc) $MAKE_ARGS Image.gz-dtb || exit 1
 
-      - name: Compile Kernel
-        working-directory: kernel-source
-        run: |
-          set -euo pipefail
-          
-          make -j$(nproc) O=out ARCH=arm64 \
-            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error" Image.gz-dtb || exit 1
-
-      - name: Clone AnyKernel3 & Create ZIP
+      - name: Create Flashable ZIP
         run: |
           git clone --depth=1 ${{ env.ANYKERNEL_REPO }} AnyKernel3
           cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/out/arch/arm64/boot/Image.gz AnyKernel3/ || true
           cd AnyKernel3
-          
-          sed -i "s/kernel.string=.*/kernel.string=${{ env.ZIP_NAME }} by GitHub Actions/g" anykernel.sh
+          sed -i "s/kernel.string=.*/kernel.string=${{ env.ZIP_NAME }} by Github Actions/g" anykernel.sh
           sed -i 's/device.name1=.*/device.name1=surya/g' anykernel.sh
           sed -i 's/device.name2=.*/device.name2=karna/g' anykernel.sh
-          
           zip -r9 ../${{ env.ZIP_NAME }}.zip * -x .git README.md *placeholder
 
       - name: Upload Artifact
