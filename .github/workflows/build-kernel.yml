@@ -69,15 +69,12 @@ jobs:
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Konfigurasi Kernel & Modul (Auto-detect / Custom defconfig)
+      - name: Konfigurasi Kernel & Modul
         working-directory: kernel-source
         run: |
           set -euo pipefail
-
-          # Pakai clang yang kita clone
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
 
-          # Tentukan TARGET_DEFCONFIG (custom atau auto-detect)
           if [ -n "${{ github.event.inputs.custom_defconfig }}" ]; then
             TARGET_DEFCONFIG="${{ github.event.inputs.custom_defconfig }}"
           else
@@ -91,24 +88,15 @@ jobs:
 
           echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
 
-          # 1) Buat defconfig di O=out (agar .config terpisah dari sumber)
-          make O=out ARCH=arm64 ${TARGET_DEFCONFIG}
+          # 1) Buat defconfig dengan parameter kompilator penuh agar lolos pre-check
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 ${TARGET_DEFCONFIG}
 
-          # 2) Jika defconfig menyalakan CONFIG_CC_STACKPROTECTOR_STRONG, nonaktifkan supaya probe compiler tidak gagal
+          # 2) Matikan stackprotector jika masih tersisa
           if grep -q "CONFIG_CC_STACKPROTECTOR_STRONG=y" out/.config 2>/dev/null; then
-            echo "Menonaktifkan CONFIG_CC_STACKPROTECTOR_STRONG karena toolchain mungkin tidak mendukung -fstack-protector-strong"
             ./scripts/config --file out/.config -d CONFIG_CC_STACKPROTECTOR_STRONG
           fi
 
-          # (Opsional) nonaktifkan CONFIG_MODULE_SIG_* jika ingin
-          # ./scripts/config --file out/.config -d CONFIG_MODULE_SIG
-          # ./scripts/config --file out/.config -d CONFIG_MODULE_SIG_FORCE
-          # ./scripts/config --file out/.config -d CONFIG_MODULE_SIG_ALL
-
-          # 3) Regenerasi config untuk menerapkan perubahan dengan bersih
-          make O=out ARCH=arm64 olddefconfig
-
-          # 4) Edit .config sesuai kebutuhan modul/features
+          # 3) Konfigurasi Modul & Keamanan
           ./scripts/config --file out/.config \
             -e CONFIG_MODULES \
             -e CONFIG_MODULE_FORCE_LOAD \
@@ -119,24 +107,25 @@ jobs:
             -d CONFIG_MODULE_SIG_ALL \
             -e CONFIG_RANDOMIZE_BASE
 
-          echo "✅ Konfigurasi selesai. file .config di out/.config"
+          # 4) Regenerasi config dengan parameter kompilator penuh
+          make O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM=1 LLVM_IAS=1 olddefconfig
 
       - name: Compile Kernel
         working-directory: kernel-source
         run: |
           set -euo pipefail
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
-          echo "Compiler: $KBUILD_COMPILER_STRING"
-
-          # Kompilasi akhir
+          
+          # Target Image.gz-dtb wajib disertakan di akhir perintah
           make -j$(nproc) O=out ARCH=arm64 CC=clang LD=ld.lld AR=llvm-ar \
             NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 Image.gz-dtb || exit 1
 
       - name: Clone AnyKernel3 & Create ZIP
         run: |
           git clone --depth=1 ${{ env.ANYKERNEL_REPO }} AnyKernel3
+          # Menggunakan fallback copy jika dtb menyatu atau terpisah
           cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp kernel-source/out/arch/arm64/boot/Image.gz AnyKernel3/ || true
           cd AnyKernel3
           
