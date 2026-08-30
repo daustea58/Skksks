@@ -1,0 +1,128 @@
+name: Build Custom Kernel Surya (Multi-Source)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_kernel:
+        description: 'Pilih Base Kernel Source'
+        required: true
+        type: choice
+        options:
+          - 'MiCode (MIUI Stock Android 10 - 4.14.117)'
+          - 'LineageOS (Custom ROM Base - 4.14.x)'
+          - 'ArrowOS (Performance Base - 4.14.x)'
+
+env:
+  DEFCONFIG: surya_defconfig
+  ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
+  CLANG_URL: https://github.com/ZyC-X/zyc-clang/releases/download/v17.0.0-Older/zyc-clang-17-0-0.tar.gz
+
+jobs:
+  build:
+    name: Build Kernel Surya
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set Variable Berdasarkan Pilihan
+        run: |
+          if [ "${{ github.event.inputs.base_kernel }}" == "MiCode (MIUI Stock Android 10 - 4.14.117)" ]; then
+            echo "KERNEL_REPO=https://github.com/MiCode/Xiaomi_Kernel_OpenSource.git" >> $GITHUB_ENV
+            echo "KERNEL_BRANCH=surya-q-oss" >> $GITHUB_ENV
+            echo "ZIP_NAME=Surya-MiCode-4.14.117-KSU-Next" >> $GITHUB_ENV
+          elif [ "${{ github.event.inputs.base_kernel }}" == "LineageOS (Custom ROM Base - 4.14.x)" ]; then
+            echo "KERNEL_REPO=https://github.com/LineageOS/android_kernel_xiaomi_surya.git" >> $GITHUB_ENV
+            echo "KERNEL_BRANCH=lineage-18.1" >> $GITHUB_ENV
+            echo "ZIP_NAME=Surya-LineageOS-4.14.x-KSU-Next" >> $GITHUB_ENV
+          else
+            echo "KERNEL_REPO=https://github.com/ArrowOS-Devices/android_kernel_xiaomi_surya.git" >> $GITHUB_ENV
+            echo "KERNEL_BRANCH=arrow-11.0" >> $GITHUB_ENV
+            echo "ZIP_NAME=Surya-ArrowOS-4.14.x-KSU-Next" >> $GITHUB_ENV
+          fi
+
+      - name: Set up Build Environment
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+          bc bison flex libssl-dev make libc6-dev libncurses5-dev libncurses-dev curl \
+          git zip unzip lld llvm python3 ccache wget zstd
+
+      - name: Setup Toolchain (Clang 17)
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/clang
+          wget -qO clang.tar.gz ${{ env.CLANG_URL }}
+          tar -xf clang.tar.gz -C $GITHUB_WORKSPACE/clang
+          rm clang.tar.gz
+
+      - name: Clone Kernel Source
+        run: |
+          git clone --depth=1 -b ${{ env.KERNEL_BRANCH }} ${{ env.KERNEL_REPO }} kernel-source
+
+      - name: Integrasi KernelSU Next & SUSFS
+        working-directory: kernel-source
+        run: |
+          # 1. Setup KernelSU Next
+          curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
+          
+          # 2. Setup SUSFS
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs
+          cp -r ../susfs/kernel_patches/fs/* fs/
+          cp -r ../susfs/kernel_patches/include/linux/* include/linux/
+          echo "obj-y += susfs.o" >> fs/Makefile
+
+      - name: Konfigurasi Kernel & Modul
+        working-directory: kernel-source
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          make O=out ARCH=arm64 ${{ env.DEFCONFIG }}
+          
+          # Optimasi modul & keamanan
+          ./scripts/config --file out/.config \
+            -e CONFIG_MODULES \
+            -e CONFIG_MODULE_FORCE_LOAD \
+            -e CONFIG_MODULE_UNLOAD \
+            -e CONFIG_MODULE_FORCE_UNLOAD \
+            -d CONFIG_MODULE_SIG \
+            -d CONFIG_MODULE_SIG_FORCE \
+            -d CONFIG_MODULE_SIG_ALL \
+            -e CONFIG_RANDOMIZE_BASE
+            
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Compile Kernel
+        working-directory: kernel-source
+        run: |
+          export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+          export KBUILD_COMPILER_STRING="$(clang --version | head -n 1)"
+          
+          make -j$(nproc) O=out ARCH=arm64 \
+            CC="ccache clang" \
+            AR=llvm-ar \
+            NM=llvm-nm \
+            OBJCOPY=llvm-objcopy \
+            OBJDUMP=llvm-objdump \
+            STRIP=llvm-strip \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            Image.gz-dtb || exit 1
+
+      - name: Clone AnyKernel3 & Create ZIP
+        run: |
+          git clone --depth=1 ${{ env.ANYKERNEL_REPO }} AnyKernel3
+          cp kernel-source/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          cd AnyKernel3
+          
+          sed -i "s/kernel.string=.*/kernel.string=${{ env.ZIP_NAME }} by GitHub Actions/g" anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=surya/g' anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=karna/g' anykernel.sh
+          
+          zip -r9 ../${{ env.ZIP_NAME }}.zip * -x .git README.md *placeholder
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_NAME }}.zip
+          retention-days: 7
