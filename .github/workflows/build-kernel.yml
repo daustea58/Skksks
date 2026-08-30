@@ -13,7 +13,6 @@ on:
           - 'ArrowOS (Performance Base - 4.14.x)'
 
 env:
-  DEFCONFIG: surya_defconfig
   ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
 
 jobs:
@@ -50,7 +49,6 @@ jobs:
 
       - name: Setup Toolchain (Proton Clang)
         run: |
-          # Menggunakan Git Clone agar tidak terkena error 404 (exit code 8)
           git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/clang
 
       - name: Clone Kernel Source
@@ -60,20 +58,29 @@ jobs:
       - name: Integrasi KernelSU Next & SUSFS
         working-directory: kernel-source
         run: |
-          # 1. Setup KernelSU Next
           curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -
           
-          # 2. Setup SUSFS
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs
           cp -r ../susfs/kernel_patches/fs/* fs/
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Konfigurasi Kernel & Modul
+      - name: Konfigurasi Kernel & Modul (Auto-Detect Defconfig)
         working-directory: kernel-source
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
-          make O=out ARCH=arm64 ${{ env.DEFCONFIG }}
+          
+          # Deteksi nama defconfig otomatis
+          if [ -f "arch/arm64/configs/vendor/surya-perf_defconfig" ]; then
+            TARGET_DEFCONFIG="vendor/surya-perf_defconfig"
+          elif [ -f "arch/arm64/configs/vendor/surya_defconfig" ]; then
+            TARGET_DEFCONFIG="vendor/surya_defconfig"
+          else
+            TARGET_DEFCONFIG="surya_defconfig"
+          fi
+          
+          echo "Menggunakan defconfig: $TARGET_DEFCONFIG"
+          make O=out ARCH=arm64 $TARGET_DEFCONFIG
           
           # Optimasi modul & keamanan
           ./scripts/config --file out/.config \
