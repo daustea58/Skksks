@@ -44,12 +44,12 @@ jobs:
             echo "ZIP_NAME=Surya-ArrowOS-4.14.x-KSU-Next" >> $GITHUB_ENV
           fi
 
-      - name: Set up Build Environment (System Clang + GCC)
+      - name: Set up Build Environment (Pure GCC)
         run: |
           sudo apt-get update -y
           sudo apt-get install -y build-essential gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
           bc bison flex libssl-dev make libc6-dev libncurses5-dev libncurses-dev curl \
-          git zip unzip lld llvm python3 ccache wget zstd clang
+          git zip unzip python3 ccache wget zstd
 
       - name: Clone Kernel Source
         run: |
@@ -83,15 +83,13 @@ jobs:
 
           echo "✅ Menggunakan defconfig: $TARGET_DEFCONFIG"
 
-          # Sisipkan HOSTCFLAGS="-fcommon" agar error yylloc tidak muncul
-          make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" ${TARGET_DEFCONFIG}
+          # Menggunakan Pure GCC (-fcommon untuk error yylloc, -Wno-error untuk bypass warning)
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error" ${TARGET_DEFCONFIG}
 
-          # Nonaktifkan Stackprotector karena Hybrid toolchain sering memicu error peringatan ini
           if grep -q "CONFIG_CC_STACKPROTECTOR_STRONG=y" out/.config 2>/dev/null; then
             ./scripts/config --file out/.config -d CONFIG_CC_STACKPROTECTOR_STRONG
           fi
 
-          # Konfigurasi fitur custom
           ./scripts/config --file out/.config \
             -e CONFIG_MODULES \
             -e CONFIG_MODULE_FORCE_LOAD \
@@ -102,17 +100,16 @@ jobs:
             -d CONFIG_MODULE_SIG_ALL \
             -e CONFIG_RANDOMIZE_BASE
 
-          make O=out ARCH=arm64 CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" olddefconfig
+          make O=out ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error" olddefconfig
 
       - name: Compile Kernel
         working-directory: kernel-source
         run: |
           set -euo pipefail
           
-          # Target build Image.gz-dtb
-          make -j$(nproc) O=out ARCH=arm64 CC=clang \
+          make -j$(nproc) O=out ARCH=arm64 \
             CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
-            HOSTCFLAGS="-fcommon" Image.gz-dtb || exit 1
+            HOSTCFLAGS="-fcommon" KCFLAGS="-Wno-error" Image.gz-dtb || exit 1
 
       - name: Clone AnyKernel3 & Create ZIP
         run: |
