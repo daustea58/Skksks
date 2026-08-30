@@ -64,14 +64,39 @@ jobs:
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Patch Python 2 gcc-wrapper
+      - name: Patch Python 3 gcc-wrapper
         working-directory: kernel-source
         run: |
           if [ -f scripts/gcc-wrapper.py ]; then
-            # Paksa script menggunakan Python 2 secara eksplisit
-            sed -i 's|#!/usr/bin/env python|#!/usr/bin/env python2|g' scripts/gcc-wrapper.py
-            # Ubah sintaks print sebagai cadangan
-            sed -i 's/print >> sys.stderr, line,/sys.stderr.write(line)/g' scripts/gcc-wrapper.py
+            python3 << 'PYTHON_PATCH_EOF'
+import re
+
+with open('scripts/gcc-wrapper.py', 'r') as f:
+    content = f.read()
+
+# Convert old Python 2 style print >> statements to Python 3 compatible syntax
+# Pattern: print >> stream, message [, more_args]
+# Replace with: stream.write(str(message) + optional_args)
+
+# Handle print >> sys.stderr, var pattern
+content = re.sub(
+    r'print\s*>>\s*sys\.stderr,\s*([^,\n]+)(?:,\s*)?',
+    r'sys.stderr.write(str(\1) + " ")',
+    content
+)
+
+# Handle remaining print >> patterns
+content = re.sub(
+    r'print\s*>>\s*(\w+),\s*(.+)',
+    r'\1.write(str(\2) + "\\n")',
+    content
+)
+
+with open('scripts/gcc-wrapper.py', 'w') as f:
+    f.write(content)
+
+print("✓ gcc-wrapper.py patched for Python 3 compatibility")
+PYTHON_PATCH_EOF
           fi
 
       - name: Build Kernel
