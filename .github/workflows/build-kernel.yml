@@ -65,21 +65,23 @@ jobs:
           cp -r ../susfs/kernel_patches/include/linux/* include/linux/
           echo "obj-y += susfs.o" >> fs/Makefile
 
-      - name: Konfigurasi Kernel & Modul (Auto-Detect Defconfig)
+      - name: Konfigurasi Kernel & Modul (Full Auto-Detect)
         working-directory: kernel-source
         run: |
           export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
           
-          # Deteksi nama defconfig otomatis
-          if [ -f "arch/arm64/configs/vendor/surya-perf_defconfig" ]; then
-            TARGET_DEFCONFIG="vendor/surya-perf_defconfig"
-          elif [ -f "arch/arm64/configs/vendor/surya_defconfig" ]; then
-            TARGET_DEFCONFIG="vendor/surya_defconfig"
-          else
-            TARGET_DEFCONFIG="surya_defconfig"
+          # Pencarian cerdas untuk file defconfig surya
+          DEFCONFIG_FULL_PATH=$(find arch/arm64/configs -type f -name "*surya*defconfig" | head -n 1)
+          
+          if [ -z "$DEFCONFIG_FULL_PATH" ]; then
+            echo "❌ ERROR: File defconfig untuk Surya tidak ditemukan di kernel source ini!"
+            exit 1
           fi
           
-          echo "Menggunakan defconfig: $TARGET_DEFCONFIG"
+          # Membuang awalan 'arch/arm64/configs/' agar dikenali oleh perintah make
+          TARGET_DEFCONFIG=${DEFCONFIG_FULL_PATH#arch/arm64/configs/}
+          
+          echo "✅ Ditemukan! Menggunakan defconfig: $TARGET_DEFCONFIG"
           make O=out ARCH=arm64 $TARGET_DEFCONFIG
           
           # Optimasi modul & keamanan
